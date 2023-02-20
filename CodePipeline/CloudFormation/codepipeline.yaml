@@ -1,0 +1,366 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  TenantName:
+    Type: String
+    AllowedPattern: "[A-Za-z-_]+"
+    Description: 'Tenant Name can include letters (A-Z and a-z), dash(-), and underscore(_)'
+  GitHubOwner:
+    Type: String
+    Description: 'Tenant Name can include letters (A-Z and a-z), numbers(0-9),and dash(-)'
+    AllowedPattern: "[A-Za-z0-9-]+"
+    Default: briangao12
+  GitHubRepoName:
+    Type: String
+    Description: 'Tenant Name can include letters (A-Z and a-z), numbers(0-9),and dash(-)'
+    AllowedPattern: "[A-Za-z0-9-]+"
+    Default: cicddemo
+  GitHubBranch:
+    Type: String
+    Description: 'Tenant Name can include letters (A-Z and a-z), numbers(0-9),and dash(-)'
+    AllowedPattern: "[A-Za-z0-9-]+"
+    Default: main
+  DefaultRegion:
+    Type: String
+    AllowedPattern: "[A-Za-z0-9-]+"
+    Default: us-east-1
+  AWSAccountID:
+    Type: String
+    Description: 'Your AWS account ID'
+    AllowedPattern: "[0-9]+"
+    Default: 123456789012
+  ECRRepoName:
+    Type: String
+    Default: cicddemo
+  DockerImageTag:
+    Type: String
+    Default: latest
+  CodeStarConnectionId:
+    Type: String
+    Description: 'For CodePipeline connection to GitHub. Leave it default unless you have recently changed that connection'
+    Default: a3f3935d-fa0e-40ca-8382-b0e9f490b8d7
+  ContainerName:
+    Type: String
+    Description: This must match the ECS task definition container name
+    Default: cicddemotest
+  ECSClusterName:
+    Type: String
+    Description: ECS cluster name this pipeline deploy Token
+    Default: demoECS
+  ECSServiceName:
+    Type: String
+    Description: ECS service name for the tasks
+    Default: demoservicelive
+
+Resources:
+# Build CodeBuildServiceRole
+  CodeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub 'codebuild-role-for-${TenantName}'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLogsPolicy
+                Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Sid: S3GetObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                Resource: '*'
+              - Sid: S3PutObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: '*'
+              - Sid: S3BucketIdentity
+                Effect: Allow
+                Action:
+                  - 's3:GetBucketAcl'
+                  - 's3:GetBucketLocation'
+                Resource: '*'
+              - Sid: ECRPush
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetAuthorizationToken
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: "*"
+                Effect: Allow
+
+# Build CodePipelineServiceRole
+  CodePipelineServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub 'codepipeline-role-for-${TenantName}'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                - iam:PassRole
+                Resource: "*"
+                Effect: Allow
+                Condition:
+                  StringEqualsIfExists:
+                    iam:PassedToService:
+                    - cloudformation.amazonaws.com
+                    - elasticbeanstalk.amazonaws.com
+                    - ec2.amazonaws.com
+                    - ecs-tasks.amazonaws.com
+              - Action:
+                - codecommit:CancelUploadArchive
+                - codecommit:GetBranch
+                - codecommit:GetCommit
+                - codecommit:GetRepository
+                - codecommit:GetUploadArchiveStatus
+                - codecommit:UploadArchive
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                - codedeploy:CreateDeployment
+                - codedeploy:GetApplication
+                - codedeploy:GetApplicationRevision
+                - codedeploy:GetDeployment
+                - codedeploy:GetDeploymentConfig
+                - codedeploy:RegisterApplicationRevision
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                - codestar-connections:UseConnection
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                - elasticbeanstalk:*
+                - ec2:*
+                - elasticloadbalancing:*
+                - autoscaling:*
+                - cloudwatch:*
+                - s3:*
+                - sns:*
+                - cloudformation:*
+                - rds:*
+                - sqs:*
+                - ecs:*
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                - lambda:InvokeFunction
+                - lambda:ListFunctions
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                - opsworks:CreateDeployment
+                - opsworks:DescribeApps
+                - opsworks:DescribeCommands
+                - opsworks:DescribeDeployments
+                - opsworks:DescribeInstances
+                - opsworks:DescribeStacks
+                - opsworks:UpdateApp
+                - opsworks:UpdateStack
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                - cloudformation:CreateStack
+                - cloudformation:DeleteStack
+                - cloudformation:DescribeStacks
+                - cloudformation:UpdateStack
+                - cloudformation:CreateChangeSet
+                - cloudformation:DeleteChangeSet
+                - cloudformation:DescribeChangeSet
+                - cloudformation:ExecuteChangeSet
+                - cloudformation:SetStackPolicy
+                - cloudformation:ValidateTemplate
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                - codebuild:BatchGetBuilds
+                - codebuild:StartBuild
+                - codebuild:BatchGetBuildBatches
+                - codebuild:StartBuildBatch
+                Resource: "*"
+                Effect: Allow
+              - Effect: Allow
+                Action:
+                - devicefarm:ListProjects
+                - devicefarm:ListDevicePools
+                - devicefarm:GetRun
+                - devicefarm:GetUpload
+                - devicefarm:CreateUpload
+                - devicefarm:ScheduleRun
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                - servicecatalog:ListProvisioningArtifacts
+                - servicecatalog:CreateProvisioningArtifact
+                - servicecatalog:DescribeProvisioningArtifact
+                - servicecatalog:DeleteProvisioningArtifact
+                - servicecatalog:UpdateProduct
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                - cloudformation:ValidateTemplate
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                - ecr:DescribeImages
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                - states:DescribeExecution
+                - states:DescribeStateMachine
+                - states:StartExecution
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                - appconfig:StartDeployment
+                - appconfig:StopDeployment
+                - appconfig:GetDeployment
+                Resource: "*"
+
+# Build CodeBuild project
+  CodeBuildDockerImage:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Sub 'cicd-for-${TenantName}'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yaml  
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0 
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Type: PLAINTEXT
+            Value: !Ref DefaultRegion 
+          - Name: AWS_ACCOUNT_ID
+            Type: PLAINTEXT
+            Value: !Ref AWSAccountID
+          - Name: IMAGE_REPO_NAME
+            Type: PLAINTEXT
+            Value: !Ref ECRRepoName 
+          - Name: IMAGE_TAG
+            Type: PLAINTEXT
+            Value: !Ref DockerImageTag
+          - Name: CONTAINER_NAME
+            Type: PLAINTEXT
+            Value: !Ref ContainerName
+      #EncryptionKey: !Sub 'arn:aws:kms:${DefaultRegion}:${AWSAccountID}:alias/aws/s3'
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: aws/codepipeline
+          StreamName: !Sub 'code-build-docker-image-${TenantName}'
+
+# Build CodePipeline Artifact S3 bucket  
+  CodePipelineArtifactStore:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Tenant
+          Value: !Sub ${TenantName}
+
+# Build CodePipeline
+  Codepipeline: 
+    Type: AWS::CodePipeline::Pipeline 
+    Properties: 
+      Name: !Sub 'cicdpipeline-for-${TenantName}'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn 
+      ArtifactStore: 
+        Type: S3 
+        Location: !Ref CodePipelineArtifactStore 
+      Stages: 
+        - Name: Source
+          Actions:
+            - ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                BranchName: main
+                ConnectionArn: !Sub "arn:aws:codestar-connections:${DefaultRegion}:${AWSAccountID}:connection/${CodeStarConnectionId}"
+                FullRepositoryId: !Sub "${GitHubOwner}/${GitHubRepoName}"
+                OutputArtifactFormat: CODE_ZIP
+              InputArtifacts: []
+              Name: SourceAction
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1    
+        - Name: Build
+          Actions:
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                EnvironmentVariables: '[{"name":"Test","value":"mytest","type":"PLAINTEXT"}]'
+                ProjectName: !Ref CodeBuildDockerImage
+              InputArtifacts:
+                - Name: SourceArtifact
+              Name: BuildAction
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 2
+        - Name: Approval
+          Actions:
+            - ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: Approval or reject this change after management review
+              Name: Approval
+              RunOrder: 3
+        - Name: Depoly
+          Actions:
+            - ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: ECS
+                Version: '1'
+              Configuration:
+                ClusterName: !Ref ECSClusterName
+                ServiceName: !Ref ECSServiceName
+              InputArtifacts:
+                - Name: BuildArtifact
+              Name: DeployAction
+              RunOrder: 4
+      Tags:
+        - Key: Tenant
+          Value: !Sub ${TenantName}
